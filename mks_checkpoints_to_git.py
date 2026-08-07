@@ -120,6 +120,9 @@ def export_to_git(revisions, devpath=0, ancestor=0):
                     continue
                 if (fullfile.find('mks_checkpoints_to_git') != -1):
                     continue
+                # Company policy: never commit *.exe files
+                if (fullfile.lower().endswith('.exe')):
+                    continue
                 inline_data(fullfile)
 
 
