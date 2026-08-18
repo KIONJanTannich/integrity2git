@@ -47,6 +47,28 @@ def convert_revision_to_mark(revision):
     return marks.index(revision) + 1
 
 
+# Progress is reported on stderr (stdout carries the fast-import stream) and
+# mirrored to a file so the status can be polled while the export runs.
+progress_total = 0
+progress_done = 0
+progress_file = None
+
+
+def report_progress(revision_number, branch):
+    global progress_done
+    progress_done += 1
+    pct = (progress_done / progress_total * 100.0) if progress_total else 100.0
+    line = '[export] %6.2f%%  (%d/%d)  %s rev %s' % (pct, progress_done, progress_total, branch, revision_number)
+    sys.stderr.write('\r' + line + ' ' * 8)
+    sys.stderr.flush()
+    if progress_file:
+        try:
+            with open(progress_file, 'w') as handle:
+                handle.write('%.2f %% (%d/%d) %s rev %s\n' % (pct, progress_done, progress_total, branch, revision_number))
+        except OSError:
+            pass
+
+
 def retrieve_revisions(devpath=0):
     if devpath:
         pipe = Popen('si viewprojecthistory --rfilter=devpath:"%s" --project="%s"' % (devpath, sys.argv[1]), shell=True, bufsize=1024, stdout=PIPE)
@@ -99,6 +121,7 @@ def export_to_git(revisions, devpath=0, ancestor=0):
         move_to_next_revision = 1
     for revision in revisions:
         mark = convert_revision_to_mark(revision["number"])
+        report_progress(revision["number"], 'devpath/%s' % devpath if devpath else 'master')
         if move_to_next_revision:
             os.system('si retargetsandbox --project="%s" --projectRevision=%s %s/%s' % (sys.argv[1], revision["number"], abs_sandbox_path, integrity_file))
             os.system('si resync --yes --recurse ')
@@ -136,12 +159,18 @@ def export_to_git(revisions, devpath=0, ancestor=0):
 marks = []
 devpaths = retrieve_devpaths()
 revisions = retrieve_revisions()
+# Pre-fetch every development path history up front so the total commit count
+# (and therefore the progress percentage) is known before the export starts.
+devpath_histories = []
+for devpath in devpaths:
+    devpath_histories.append((devpath, retrieve_revisions(devpath[0])))
+progress_total = len(revisions) + sum(len(history) for _, history in devpath_histories)
+progress_file = os.path.join(os.getcwd(), 'migration_progress.txt')
 # Create a build sandbox of the first revision
 os.system('si createsandbox --populate --recurse --project="%s" --projectRevision=%s tmp' % (sys.argv[1], revisions[0]["number"]))
 os.chdir('tmp')
 export_to_git(revisions)  # export master branch first!!
-for devpath in devpaths:
-    devpath_revisions = retrieve_revisions(devpath[0])
+for devpath, devpath_revisions in devpath_histories:
     export_to_git(devpath_revisions, devpath[0].replace(' ', '_'), devpath[1])  # branch names can not have spaces in git so replace with underscores
 # Drop the temporary "tmp" sandbox created above (does not touch any other sandbox)
 shortname = sys.argv[1].replace('"', '').split('/')[-1]
