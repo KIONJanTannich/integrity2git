@@ -55,18 +55,25 @@ def retrieve_revisions(devpath=0):
     output = pipe.stdout.read().decode('utf-8', errors='replace')
     versions = output.split('\n')
     versions = versions[1:]
-    version_re = re.compile(r'[0-9]([\.0-9])+')
+    # A real history row starts with a full revision number as its first
+    # tab-separated column. Lines that don't are continuations of a multi-line
+    # checkpoint description and get appended to the previous revision.
+    version_re = re.compile(r'^[0-9]+(\.[0-9]+)+$')
     revisions = []
     for version in versions:
-        match = version_re.match(version)
-        if match:
-            version_cols = version.split('\t')
+        version = version.rstrip('\r')
+        if not version:
+            continue
+        version_cols = version.split('\t')
+        if version_re.match(version_cols[0]) and len(version_cols) >= 3:
             revision = {}
             revision["number"] = version_cols[0]
             revision["author"] = version_cols[1]
             revision["seconds"] = int(time.mktime(datetime.strptime(version_cols[2], "%b %d, %Y %I:%M:%S %p").timetuple()))
-            revision["description"] = version_cols[5]
+            revision["description"] = version_cols[5] if len(version_cols) > 5 else version_cols[0]
             revisions.append(revision)
+        elif revisions:
+            revisions[-1]["description"] += "\n" + version
     revisions.reverse()  # Old to new
     re.purge()
     return revisions
